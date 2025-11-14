@@ -34,7 +34,7 @@ class LLMConfig(BaseModel):
 class SearchConfig(BaseModel):
     """External search API configuration."""
 
-    serpapi_key: Optional[str] = None
+    tavily_key: Optional[str] = None
     max_arxiv_results: int = Field(default=8, ge=1, le=50)
     max_web_results: int = Field(default=8, ge=1, le=50)
     max_semantic_scholar_results: int = Field(default=5, ge=1, le=20)
@@ -102,7 +102,7 @@ class ResearchConfig(BaseModel):
         )
 
         search_config = SearchConfig(
-            serpapi_key=os.getenv("SERPAPI_KEY"),
+            tavily_key=os.getenv("TAVILY_KEY"),
             max_arxiv_results=int(os.getenv("MAX_ARXIV_RESULTS", 8)),
             max_web_results=int(os.getenv("MAX_WEB_RESULTS", 8)),
             max_semantic_scholar_results=int(os.getenv("MAX_SEMANTIC_SCHOLAR_RESULTS", 5)),

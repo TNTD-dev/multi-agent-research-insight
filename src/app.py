@@ -19,6 +19,8 @@ sys.path.insert(0, str(project_root))
 
 # Import the research pipeline
 from src.agentic_ai_pipeline import run_research_pipeline
+from src.utils.visualization import create_interactive_kg_plotly, create_kg_statistics
+from src.agents.state import KnowledgeGraph, KnowledgeGraphNode, KnowledgeGraphEdge
 
 # Page configuration
 st.set_page_config(
@@ -94,7 +96,7 @@ with st.sidebar:
     
     # Automatically load from environment
     groq_key = os.getenv("GROQ_API_KEY", "")
-    serpapi_key = os.getenv("SERPAPI_KEY", "")
+    tavily_key = os.getenv("TAVILY_KEY", "")
     
     # Show status
     if groq_key:
@@ -103,11 +105,11 @@ with st.sidebar:
         st.error("❌ GROQ API Key: Not found")
         st.info("💡 Set `GROQ_API_KEY` in your `.env` file or environment variables")
     
-    if serpapi_key:
-        st.success("✅ SERPAPI Key: Configured (Optional)")
+    if tavily_key:
+        st.success("✅ Tavily API Key: Configured (Optional)")
     else:
-        st.warning("⚠️ SERPAPI Key: Not configured (Web search disabled)")
-        st.info("💡 Set `SERPAPI_KEY` in your `.env` file for web search")
+        st.warning("⚠️ Tavily API Key: Not configured (Web search disabled)")
+        st.info("💡 Set `TAVILY_KEY` in your `.env` file for web search")
     
     st.markdown("---")
     st.markdown("### System Capabilities")
@@ -252,6 +254,115 @@ with tab2:
         raw_result = st.session_state.research_result
         result = convert_to_dict(raw_result)
         
+        # Helper function to reconstruct KnowledgeGraph from dict
+        def dict_to_kg(kg_dict):
+            """Convert dict back to KnowledgeGraph object if needed."""
+            if not kg_dict:
+                return None
+            if isinstance(kg_dict, KnowledgeGraph):
+                return kg_dict
+            try:
+                nodes = [KnowledgeGraphNode(**node) for node in kg_dict.get('nodes', [])]
+                edges = [KnowledgeGraphEdge(**edge) for edge in kg_dict.get('edges', [])]
+                return KnowledgeGraph(nodes=nodes, edges=edges, metadata=kg_dict.get('metadata', {}))
+            except Exception:
+                return None
+        
+        # Helper function to parse Notable Insights and Conclusion from detailed report
+        def parse_report_sections(report_text):
+            """Extract Notable Insights and Conclusion from detailed report."""
+            insights = []
+            conclusion = ""
+            
+            if not report_text:
+                return insights, conclusion
+            
+            # Split report into lines
+            lines = report_text.split('\n')
+            
+            # Find Notable Insights section
+            insights_started = False
+            insights_section = []
+            
+            # Find Conclusion section
+            conclusion_started = False
+            conclusion_section = []
+            
+            for i, line in enumerate(lines):
+                line_lower = line.lower().strip()
+                line_stripped = line.strip()
+                
+                # Check for Notable Insights section (various formats)
+                if ('notable insights' in line_lower and ('**3.' in line_lower or '**3' in line_lower or line_lower.startswith('**3'))) or \
+                   ('**3. notable insights**' in line_lower) or \
+                   (line_lower == '**3. notable insights**'):
+                    insights_started = True
+                    continue
+                
+                # Check for Conclusion section (various formats)
+                if ('**6. conclusion**' in line_lower) or \
+                   (line_lower == '**conclusion**') or \
+                   (line_lower.startswith('**6. conclusion**')) or \
+                   (line_lower.startswith('conclusion') and not line_lower.startswith('conflicting') and i > 20):  # Avoid early false positives
+                    conclusion_started = True
+                    insights_started = False
+                    continue
+                
+                # Stop collecting insights when we hit next major section
+                if insights_started:
+                    if ('research gaps' in line_lower and ('**4.' in line_lower or '**4' in line_lower)) or \
+                       ('conflicting evidence' in line_lower and ('**5.' in line_lower or '**5' in line_lower)) or \
+                       ('**4.' in line_stripped) or ('**5.' in line_stripped):
+                        insights_started = False
+                
+                # Stop collecting conclusion when we hit Sources or Recommendations
+                if conclusion_started:
+                    if ('## sources' in line_lower) or \
+                       ('**recommendations**' in line_lower) or \
+                       ('**future work**' in line_lower) or \
+                       (line_stripped.startswith('## SOURCES')):
+                        break
+                
+                # Collect insights
+                if insights_started and line_stripped:
+                    # Skip empty lines and section headers
+                    if not line_stripped.startswith('#') and not line_stripped.startswith('**') and len(line_stripped) > 5:
+                        # Remove markdown formatting but keep the content
+                        clean_line = line_stripped.lstrip('- •*').strip()
+                        # Remove bold markers but keep text
+                        clean_line = clean_line.replace('**', '').strip()
+                        if clean_line and len(clean_line) > 10:  # Filter out very short lines
+                            insights_section.append(clean_line)
+                
+                # Collect conclusion
+                if conclusion_started and line_stripped:
+                    # Skip section headers and empty lines
+                    if not line_stripped.startswith('#') and not line_stripped.startswith('**') and len(line_stripped) > 5:
+                        clean_line = line_stripped.strip()
+                        # Remove markdown formatting
+                        clean_line = clean_line.replace('**', '').strip()
+                        if clean_line:
+                            conclusion_section.append(clean_line)
+            
+            # Process insights - extract bullet points
+            for line in insights_section:
+                # Remove markdown bold but keep content
+                line = line.replace('**', '').strip()
+                if line and not line.startswith('#') and len(line) > 10:
+                    # If line already has bullet, keep it; otherwise add one
+                    if not (line.startswith('-') or line.startswith('•')):
+                        line = f"- {line}"
+                    insights.append(line)
+            
+            # Join conclusion lines and clean up
+            conclusion = ' '.join(conclusion_section).strip()
+            # Remove excessive markdown formatting
+            conclusion = conclusion.replace('**', '').strip()
+            # Remove multiple spaces
+            conclusion = ' '.join(conclusion.split())
+            
+            return insights, conclusion
+        
         # Executive Summary
         st.markdown("## 🎯 Executive Summary")
         st.markdown(f"""
@@ -292,18 +403,81 @@ with tab2:
                 delta=None
             )
         
-        # Knowledge Graph
-        st.markdown("## 🕸️ Knowledge Graph")
-        kg_files = list(Path("visualisations").glob("kg_*.png"))
-        if kg_files:
-            latest_kg = max(kg_files, key=os.path.getctime)
+        # Interactive Knowledge Graph
+        st.markdown("## 🕸️ Interactive Knowledge Graph")
+        
+        kg_data = result.get('knowledge_graph')
+        knowledge_graph = dict_to_kg(kg_data)
+        
+        if knowledge_graph and knowledge_graph.nodes:
+            # Statistics
+            kg_stats = create_kg_statistics(knowledge_graph)
+            if kg_stats:
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Total Nodes", kg_stats.get('total_nodes', 0))
+                with col2:
+                    st.metric("Concepts", kg_stats.get('concept_nodes', 0))
+                with col3:
+                    st.metric("Sources", kg_stats.get('source_nodes', 0))
+                with col4:
+                    st.metric("Connections", kg_stats.get('total_edges', 0))
+            
+            # Interactive Graph
             try:
-                image = Image.open(latest_kg)
-                st.image(image, caption="Research Knowledge Graph", use_container_width=True)
-            except:
-                st.warning("Knowledge graph image could not be loaded")
+                fig = create_interactive_kg_plotly(knowledge_graph)
+                if fig:
+                    st.plotly_chart(fig, use_container_width=True, height=800)
+                    
+                    # Additional controls and info
+                    with st.expander("📊 Graph Controls & Info"):
+                        st.markdown("""
+                        **Interactive Features:**
+                        - 🖱️ **Hover**: See detailed information about nodes
+                        - 🔍 **Zoom**: Use mouse wheel or toolbar
+                        - 📍 **Pan**: Click and drag to move around
+                        - 🎯 **Select**: Click on nodes to highlight
+                        - 🔄 **Reset**: Use the "Reset View" button or double-click
+                        
+                        **Node Types:**
+                        - 🟢 **Green circles**: Research concepts
+                        - 🔴 **Red squares**: Research sources/papers
+                        
+                        **Tips:**
+                        - Larger nodes have more connections
+                        - Hover over nodes to see full details and links
+                        - Click on source nodes to open the paper URL
+                        """)
+                        
+                        # Show relation breakdown
+                        if kg_stats.get('relation_breakdown'):
+                            st.markdown("**Connection Types:**")
+                            for rel, count in kg_stats['relation_breakdown'].items():
+                                st.write(f"- **{rel}**: {count}")
+                else:
+                    st.warning("Could not create interactive graph")
+                    # Fallback to static image
+                    kg_files = list(Path("visualisations").glob("kg_*.png"))
+                    if kg_files:
+                        latest_kg = max(kg_files, key=os.path.getctime)
+                        try:
+                            image = Image.open(latest_kg)
+                            st.image(image, caption="Research Knowledge Graph (Static Fallback)", use_container_width=True)
+                        except:
+                            st.warning("Could not load knowledge graph visualization")
+            except Exception as e:
+                st.error(f"Error displaying interactive graph: {e}")
+                # Fallback to static image
+                kg_files = list(Path("visualisations").glob("kg_*.png"))
+                if kg_files:
+                    latest_kg = max(kg_files, key=os.path.getctime)
+                    try:
+                        image = Image.open(latest_kg)
+                        st.image(image, caption="Research Knowledge Graph (Static Fallback)", use_container_width=True)
+                    except:
+                        st.warning("Could not load knowledge graph visualization")
         else:
-            st.info("No knowledge graph visualization available")
+            st.info("No knowledge graph available for this research")
         
         # Key Concepts
         st.markdown("## 🔑 Key Concepts")
@@ -322,6 +496,34 @@ with tab2:
                 st.markdown(f"{i}. {finding}")
         else:
             st.info("No consensus findings available")
+        
+        # Notable Insights
+        detailed_report = result.get('detailed_report', '')
+        insights, conclusion = parse_report_sections(detailed_report)
+        
+        if insights:
+            st.markdown("## 💡 Notable Insights")
+            for i, insight in enumerate(insights, 1):
+                # Check if insight already has bullet point formatting
+                if insight.startswith('-') or insight.startswith('•'):
+                    st.markdown(f"{insight}")
+                else:
+                    st.markdown(f"- {insight}")
+        else:
+            st.markdown("## 💡 Notable Insights")
+            st.info("No notable insights extracted from the report")
+        
+        # Conclusion
+        if conclusion:
+            st.markdown("## 📝 Conclusion")
+            st.markdown(f"""
+            <div class="metric-card">
+            {conclusion}
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown("## 📝 Conclusion")
+            st.info("No conclusion available in the report")
         
         # Research Gaps
         st.markdown("## 🔍 Research Gaps")
@@ -438,6 +640,7 @@ with tab2:
         
         with col3:
             # Download knowledge graph
+            kg_files = list(Path("visualisations").glob("kg_*.png"))
             if kg_files:
                 latest_kg = max(kg_files, key=os.path.getctime)
                 with open(latest_kg, 'rb') as f:
@@ -447,6 +650,8 @@ with tab2:
                         file_name=f"knowledge_graph_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png",
                         mime="image/png"
                     )
+            else:
+                st.info("No knowledge graph available to download")
 
 with tab3:
     st.header("Research History")

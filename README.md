@@ -28,7 +28,7 @@ pip install -r requirements.txt
 3. Tạo file `.env` trong thư mục gốc:
 ```env
 GROQ_API_KEY=your_groq_api_key_here
-SERPAPI_KEY=your_serpapi_key_here  # Tùy chọn
+TAVILY_KEY=your_tavily_api_key_here  # Tùy chọn
 ```
 
 ## Sử dụng
@@ -78,7 +78,7 @@ multi-agent-research/
 
 - Python 3.8+
 - GROQ API key (bắt buộc)
-- SERPAPI key (tùy chọn, cho tìm kiếm web)
+- Tavily API key (tùy chọn, cho tìm kiếm web)
 
 
 

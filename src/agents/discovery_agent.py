@@ -11,9 +11,9 @@ import arxiv
 import requests
 
 try:
-    from serpapi import GoogleSearch  # type: ignore
+    from tavily import TavilyClient  # type: ignore
 except ImportError:  # pragma: no cover - optional dependency
-    GoogleSearch = None
+    TavilyClient = None
 
 from src.agents.state import ResearchSource, ResearchState
 from src.config import ResearchConfig
@@ -75,46 +75,48 @@ class DiscoveryAgent:
             return []
 
     def search_web(self, query: str, num_results: int | None = None) -> List[ResearchSource]:
-        """Search general web sources using SerpAPI."""
+        """Search general web sources using Tavily API."""
 
         num_results = num_results or self.config.search.max_web_results
 
         try:
-            if GoogleSearch is None:
-                logger.warning("serpapi package not installed; skipping web search.")
+            if TavilyClient is None:
+                logger.warning("tavily package not installed; skipping web search.")
                 return []
 
-            if not self.config.search.serpapi_key:
-                logger.warning("SERPAPI_KEY not configured; skipping web search.")
+            if not self.config.search.tavily_key:
+                logger.warning("TAVILY_KEY not configured; skipping web search.")
                 return []
 
-            search = GoogleSearch(
-                {
-                    "q": query,
-                    "api_key": self.config.search.serpapi_key,
-                    "num": num_results,
-                }
+            client = TavilyClient(api_key=self.config.search.tavily_key)
+            response = client.search(
+                query=query,
+                search_depth="advanced",
+                max_results=num_results,
             )
 
-            results = search.get_dict().get("organic_results", [])
+            results = response.get("results", [])
             formatted: List[ResearchSource] = []
 
-            for result in results:
-                link = result.get("link", "") or result.get("url", "")
+            for idx, result in enumerate(results):
+                url = result.get("url", "")
                 # Web search should always have a link, but ensure it's not empty
-                if not link:
+                if not url:
                     logger.warning("Web search result missing URL, skipping: %s", result.get("title", "Unknown"))
                     continue
                     
                 formatted.append(
                     ResearchSource(
-                        id=f"web_{hashlib.md5(link.encode()).hexdigest()[:8]}",
+                        id=f"web_{hashlib.md5(url.encode()).hexdigest()[:8]}",
                         title=result.get("title", "No title"),
-                        summary=result.get("snippet", ""),
-                        full_text=result.get("snippet", ""),
-                        url=link,
+                        summary=result.get("content", ""),
+                        full_text=result.get("content", ""),
+                        url=url,
                         source_type="web",
-                        metadata={"position": result.get("position", 999)},
+                        metadata={
+                            "position": idx + 1,
+                            "score": result.get("score"),
+                        },
                     )
                 )
 

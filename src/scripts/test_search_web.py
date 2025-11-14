@@ -17,12 +17,12 @@ except ImportError:
     # Nếu không có dotenv, vẫn chạy được nhưng không load .env
     pass
 
-# Cố gắng import thư viện serpapi
+# Cố gắng import thư viện tavily
 try:
-    from serpapi import GoogleSearch
+    from tavily import TavilyClient
 except ImportError:
-    print("Lỗi: Thư viện 'serpapi' (google-search-results) chưa được cài đặt.")
-    print("Hãy chạy: pip install google-search-results")
+    print("Lỗi: Thư viện 'tavily' (tavily-python) chưa được cài đặt.")
+    print("Hãy chạy: pip install tavily-python")
     sys.exit(1)
 
 # Thiết lập logging cơ bản
@@ -47,31 +47,31 @@ class ResearchSource:
 def search_web_standalone(
     api_key: str, query: str, num_results: int = 5
 ) -> List[ResearchSource]:
-    """Search general web sources using SerpAPI."""
+    """Search general web sources using Tavily API."""
     
     try:
-        # Khởi tạo tìm kiếm
-        search = GoogleSearch(
-            {
-                "q": query,
-                "api_key": api_key,
-                "num": num_results,
-            }
+        # Khởi tạo Tavily client
+        client = TavilyClient(api_key=api_key)
+        
+        # Thực hiện tìm kiếm với search_depth="advanced"
+        response = client.search(
+            query=query,
+            search_depth="advanced",
+            max_results=num_results,
         )
 
-        # Lấy kết quả
-        # Hàm search.get_dict() sẽ thực hiện yêu cầu API
-        results = search.get_dict().get("organic_results", [])
+        # Lấy kết quả từ response
+        results = response.get("results", [])
         
         if not results:
-            logger.warning("Không tìm thấy kết quả 'organic_results' nào.")
+            logger.warning("Không tìm thấy kết quả nào.")
             return []
 
         formatted: List[ResearchSource] = []
 
-        for result in results:
-            link = result.get("link", "") or result.get("url", "")
-            if not link:
+        for idx, result in enumerate(results):
+            url = result.get("url", "")
+            if not url:
                 logger.warning(
                     "Kết quả web thiếu URL, bỏ qua: %s",
                     result.get("title", "Unknown"),
@@ -79,18 +79,21 @@ def search_web_standalone(
                 continue
             
             # Tạo ID y hệt logic của bạn
-            result_id = f"web_{hashlib.md5(link.encode()).hexdigest()[:8]}"
-            snippet = result.get("snippet", "")
+            result_id = f"web_{hashlib.md5(url.encode()).hexdigest()[:8]}"
+            content = result.get("content", "")
 
             formatted.append(
                 ResearchSource(
                     id=result_id,
                     title=result.get("title", "No title"),
-                    summary=snippet,      # Lấy snippet
-                    full_text=snippet,    # Lấy snippet (giống code của bạn)
-                    url=link,
+                    summary=content,      # Lấy content từ Tavily
+                    full_text=content,    # Lấy content từ Tavily
+                    url=url,
                     source_type="web",
-                    metadata={"position": result.get("position", 999)},
+                    metadata={
+                        "position": idx + 1,
+                        "score": result.get("score"),
+                    },
                 )
             )
 
@@ -105,14 +108,14 @@ def search_web_standalone(
 if __name__ == "__main__":
     
     # Lấy API key từ biến môi trường (đã load từ .env nếu có)
-    SERPAPI_KEY = os.environ.get("SERPAPI_KEY")
+    TAVILY_KEY = os.environ.get("TAVILY_KEY")
     
-    if not SERPAPI_KEY:
-        logger.error("LỖI: Biến môi trường SERPAPI_KEY chưa được đặt.")
+    if not TAVILY_KEY:
+        logger.error("LỖI: Biến môi trường TAVILY_KEY chưa được đặt.")
         logger.error("Hãy đặt key bằng một trong các cách sau:")
-        logger.error("  1. Tạo file .env trong thư mục gốc và thêm: SERPAPI_KEY=your_key_here")
-        logger.error("  2. Hoặc set biến môi trường trong PowerShell: $env:SERPAPI_KEY='your_key_here'")
-        logger.error("  3. Hoặc set biến môi trường trong CMD: set SERPAPI_KEY=your_key_here")
+        logger.error("  1. Tạo file .env trong thư mục gốc và thêm: TAVILY_KEY=your_key_here")
+        logger.error("  2. Hoặc set biến môi trường trong PowerShell: $env:TAVILY_KEY='your_key_here'")
+        logger.error("  3. Hoặc set biến môi trường trong CMD: set TAVILY_KEY=your_key_here")
         sys.exit(1) # Thoát script
 
     # Truy vấn để test
@@ -123,7 +126,7 @@ if __name__ == "__main__":
 
     # Gọi hàm test
     search_results = search_web_standalone(
-        api_key=SERPAPI_KEY,
+        api_key=TAVILY_KEY,
         query=TEST_QUERY,
         num_results=NUM_RESULTS
     )

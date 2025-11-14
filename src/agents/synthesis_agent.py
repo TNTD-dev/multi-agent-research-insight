@@ -33,12 +33,52 @@ class SynthesisAgent:
         prompt = (
             "Extract 10-15 key technical concepts from the following research snippets.\n"
             f"{combined_text}\n"
-            "Return a comma-separated list."
+            "Return ONLY a comma-separated list of concepts, without any introductory text or explanation."
         )
 
         try:
             response = self.llm.invoke(prompt)
-            concepts = [concept.strip() for concept in response.content.split(",") if concept.strip()]
+            content = response.content.strip()
+            
+            # Remove common intro phrases that LLM might add
+            intro_phrases = [
+                "Here are",
+                "The key concepts are",
+                "Key concepts:",
+                "Concepts:",
+                "Here are the key concepts:",
+                "Here are 15 key technical concepts extracted from the research snippets:",
+                "Here are the technical concepts:",
+            ]
+            
+            for phrase in intro_phrases:
+                if content.lower().startswith(phrase.lower()):
+                    # Find the colon after the phrase
+                    colon_idx = content.find(":")
+                    if colon_idx != -1:
+                        content = content[colon_idx + 1:].strip()
+                    else:
+                        # If no colon, try to find where the list starts
+                        words = phrase.split()
+                        for word in words:
+                            if word.lower() in content.lower():
+                                idx = content.lower().find(word.lower())
+                                content = content[idx + len(word):].strip()
+                                if content.startswith(":"):
+                                    content = content[1:].strip()
+                    break
+            
+            # Split by comma and clean up
+            concepts = []
+            for concept in content.split(","):
+                concept = concept.strip()
+                # Remove any remaining intro text
+                if concept and not any(phrase.lower() in concept.lower() for phrase in intro_phrases):
+                    # Remove common prefixes
+                    concept = concept.lstrip("- •*").strip()
+                    if concept:
+                        concepts.append(concept)
+            
             logger.info("Synthesis: extracted %d concepts", len(concepts))
             return concepts[:15]
         except Exception as exc:  # pylint: disable=broad-except
