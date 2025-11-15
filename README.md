@@ -8,7 +8,6 @@ Hệ thống nghiên cứu thông minh sử dụng nhiều AI agent để tự �
 - ✅ **Validation Agent**: Đánh giá chất lượng nguồn thông tin
 - 📚 **RAG Agent**: Tích hợp RAG với ChromaDB để truy xuất thông tin
 - 🔬 **Synthesis Agent**: Tổng hợp và phân tích thông tin
-- 🤖 **ML Agent**: Phân tích bằng machine learning (topic modeling, clustering)
 - 📊 **Reporter Agent**: Tạo báo cáo chi tiết
 - 📈 **Monitoring Agent**: Giám sát và cảnh báo
 

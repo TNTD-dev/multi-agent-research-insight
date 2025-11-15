@@ -10,6 +10,7 @@ langchain-huggingface==1.0.0
 langchain-chroma==1.0.0
 langchain-core==1.0.0
 langchain-text-splitters==1.0.0
+langgraph==1.0.0
 
 # Search & Data Sources
 arxiv==2.2.0

@@ -11,6 +11,7 @@ from pathlib import Path
 import json
 from datetime import datetime
 import time
+import re
 from PIL import Image
 
 # Add parent directory to path for imports
@@ -123,23 +124,16 @@ with st.sidebar:
     - 🧬 **Synthesis**  
       Knowledge graphs & gap analysis
     
-    - 🤖 **ML Analysis**  
-      Topic modeling, clustering, predictions
-    
     - 📊 **Reporting**  
       Comprehensive research reports
-    
-    - 📡 **Monitoring**  
-      Trend analysis & alerts
     """)
     
     st.markdown("---")
     st.markdown("### About")
     st.info("""
     **Version:** 2.0  
-    **Agents:** 7 specialized AI agents  
-    **Framework:** LangGraph + Groq LLM  
-    **RAG:** ChromaDB + HuggingFace
+    **Agents:** 4 specialized AI agents  
+    **Framework:** LangGraph + Groq LLM
     """)
 
 # Main content area
@@ -163,8 +157,33 @@ with tab1:
             "Research Depth",
             options=["quick", "standard", "deep"],
             index=1,
-            help="Quick: ~5 min | Standard: ~8 min | Deep: ~12 min"
+            help="Select the depth of research analysis"
         )
+        
+        # Detailed depth descriptions
+        with st.expander("📊 Depth Level Details"):
+            st.markdown("""
+            **🚀 Quick** (~3-5 min)
+            - Minimal sources: 3 ArXiv, 3 Web, 2 Semantic Scholar
+            - No reformulated searches
+            - Basic validation (score ≥40)
+            - 8 concepts, 3 findings, 2 gaps
+            - Brief report (5 sources max)
+            
+            **⚖️ Standard** (~8-10 min) - *Recommended*
+            - Balanced sources: 8 ArXiv, 8 Web, 5 Semantic Scholar
+            - Reformulated searches if sources < 15
+            - Standard validation (score ≥40)
+            - 15 concepts, 7 findings, 5 gaps
+            - Full report (10 sources)
+            
+            **🔬 Deep** (~12-15 min)
+            - Comprehensive sources: 15 ArXiv, 12 Web, 10 Semantic Scholar
+            - Always runs reformulated searches
+            - Strict validation (score ≥50)
+            - 20 concepts, 10 findings, 8 gaps
+            - Detailed report (20 sources, extra sections)
+            """)
     
     # Example queries
     with st.expander("💡 Example Queries"):
@@ -193,11 +212,8 @@ with tab1:
             stages = [
                 ("🔍 Discovery Agent", "Searching ArXiv, Semantic Scholar, and Web..."),
                 ("✅ Validation Agent", "Scoring source credibility and relevance..."),
-                ("🧠 RAG Agent", "Creating vector store and embeddings..."),
                 ("🧬 Synthesis Agent", "Building knowledge graph and finding gaps..."),
-                ("🤖 ML Agent", "Performing topic modeling and clustering..."),
-                ("📊 Reporter Agent", "Generating comprehensive report..."),
-                ("📡 Monitoring Agent", "Setting up trend analysis...")
+                ("📊 Reporter Agent", "Generating comprehensive report...")
             ]
             
             # Show progress
@@ -293,34 +309,50 @@ with tab2:
                 line_stripped = line.strip()
                 
                 # Check for Notable Insights section (various formats)
-                if ('notable insights' in line_lower and ('**3.' in line_lower or '**3' in line_lower or line_lower.startswith('**3'))) or \
-                   ('**3. notable insights**' in line_lower) or \
-                   (line_lower == '**3. notable insights**'):
+                # Match patterns like "**3. Notable Insights**", "**4. notable insights**", etc.
+                insights_pattern = re.compile(r'\*\*\s*\d+\.\s*notable\s+insights\s*\*\*', re.IGNORECASE)
+                if insights_pattern.search(line_lower) or \
+                   ('**notable insights**' in line_lower) or \
+                   (line_lower.startswith('**') and 'notable insights' in line_lower and i > 10):  # Avoid early false positives
                     insights_started = True
                     continue
                 
                 # Check for Conclusion section (various formats)
-                if ('**6. conclusion**' in line_lower) or \
-                   (line_lower == '**conclusion**') or \
-                   (line_lower.startswith('**6. conclusion**')) or \
-                   (line_lower.startswith('conclusion') and not line_lower.startswith('conflicting') and i > 20):  # Avoid early false positives
+                # Match patterns like "**7. Conclusion**", "**6. conclusion**", "**Conclusion**", etc.
+                conclusion_pattern = re.compile(r'\*\*\s*\d+\.\s*conclusion\s*\*\*', re.IGNORECASE)
+                if conclusion_pattern.search(line_lower) or \
+                   ('**conclusion**' in line_lower and not 'conflicting' in line_lower) or \
+                   (line_lower.startswith('**') and 'conclusion' in line_lower and not 'conflicting' in line_lower and i > 20):  # Avoid early false positives
                     conclusion_started = True
                     insights_started = False
                     continue
                 
                 # Stop collecting insights when we hit next major section
+                # Match any numbered section header after Notable Insights
                 if insights_started:
-                    if ('research gaps' in line_lower and ('**4.' in line_lower or '**4' in line_lower)) or \
-                       ('conflicting evidence' in line_lower and ('**5.' in line_lower or '**5' in line_lower)) or \
-                       ('**4.' in line_stripped) or ('**5.' in line_stripped):
+                    # Check for Research Gaps (any number)
+                    gaps_pattern = re.compile(r'\*\*\s*\d+\.\s*(research\s+gaps|research\s+gaps\s+&)', re.IGNORECASE)
+                    # Check for Conflicting Evidence (any number)
+                    conflict_pattern = re.compile(r'\*\*\s*\d+\.\s*conflicting\s+evidence\s*\*\*', re.IGNORECASE)
+                    # Check for Conclusion (any number)
+                    conclusion_check_pattern = re.compile(r'\*\*\s*\d+\.\s*conclusion\s*\*\*', re.IGNORECASE)
+                    
+                    if gaps_pattern.search(line_lower) or \
+                       conflict_pattern.search(line_lower) or \
+                       conclusion_check_pattern.search(line_lower) or \
+                       ('## sources' in line_lower) or \
+                       (line_stripped.startswith('## SOURCES')) or \
+                       (line_stripped.startswith('## CONFLICTING')):
                         insights_started = False
                 
-                # Stop collecting conclusion when we hit Sources or Recommendations
+                # Stop collecting conclusion when we hit Sources, Conflicting Evidence, or Recommendations
                 if conclusion_started:
                     if ('## sources' in line_lower) or \
+                       ('## conflicting evidence' in line_lower) or \
                        ('**recommendations**' in line_lower) or \
                        ('**future work**' in line_lower) or \
-                       (line_stripped.startswith('## SOURCES')):
+                       (line_stripped.startswith('## SOURCES')) or \
+                       (line_stripped.startswith('## CONFLICTING')):
                         break
                 
                 # Collect insights
@@ -537,31 +569,6 @@ with tab2:
                     st.markdown(f"**Why it matters:** {importance}")
         else:
             st.info("No research gaps identified")
-        
-        # ML Analysis
-        ml_insights = result.get('ml_insights', {})
-        if ml_insights and ml_insights.get('status') != 'unavailable':
-            st.markdown("## 🤖 Machine Learning Analysis")
-            
-            # Topics
-            ml_topics = result.get('ml_topics', [])
-            if ml_topics:
-                st.markdown("### 📌 Discovered Topics (LDA)")
-                for topic in ml_topics[:5]:
-                    st.markdown(f"**Topic {topic['topic_id']}:** {', '.join(topic['keywords'])}")
-            
-            # Clusters
-            clusters = result.get('paper_clusters', {})
-            if clusters and clusters.get('clusters'):
-                st.markdown("### 📊 Paper Clusters")
-                st.markdown(f"Papers grouped into **{clusters.get('n_clusters', 0)}** thematic clusters")
-                
-                for cluster_id, theme in clusters.get('cluster_themes', {}).items():
-                    size = clusters.get('cluster_sizes', {}).get(cluster_id, 0)
-                    with st.expander(f"Cluster {cluster_id} ({size} papers): {', '.join(theme[:3])}"):
-                        papers = clusters.get('clusters', {}).get(cluster_id, [])
-                        for paper in papers[:5]:
-                            st.markdown(f"- {paper['title']}")
         
         # Top Sources
         st.markdown("## 📚 Top Sources")

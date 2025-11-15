@@ -4,7 +4,7 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, TypedDict, Any
 
 import networkx as nx
 
@@ -13,17 +13,16 @@ try:  # pragma: no cover - optional dependency
 except ImportError:  # pragma: no cover - optional dependency
     plt = None
 
+from langgraph.graph import StateGraph, END
+
 from src.agents import (
     DiscoveryAgent,
-    MLAgent,
-    MonitoringAgent,
-    RAGAgent,
     ReporterAgent,
     SynthesisAgent,
     ValidationAgent,
 )
 from src.agents.state import KnowledgeGraph, ResearchState
-from src.config import config
+from src.config import config, ResearchDepthConfig
 from src.utils.logger import default_logger as logger
 
 
@@ -33,58 +32,193 @@ def initialize_state(query: str, research_depth: str = "standard") -> ResearchSt
     return ResearchState(query=query, research_depth=research_depth)
 
 
-def _build_agents(llm) -> Dict[str, object]:
+def _build_agents(llm, depth_config: ResearchDepthConfig | None = None) -> Dict[str, object]:
     """Instantiate all specialised agents."""
         
     return {
-        "discovery": DiscoveryAgent(llm, config),
-        "validation": ValidationAgent(llm),
-        "rag": RAGAgent(llm, config),
-        "synthesis": SynthesisAgent(llm),
-        "ml": MLAgent(llm, config),
-        "reporter": ReporterAgent(llm),
-        "monitoring": MonitoringAgent(llm),
+        "discovery": DiscoveryAgent(llm, config, depth_config),
+        "validation": ValidationAgent(llm, depth_config),
+        "synthesis": SynthesisAgent(llm, depth_config),
+        "reporter": ReporterAgent(llm, depth_config),
     }
 
 
-def _run_agent(state: ResearchState, name: str, handler) -> None:
-    """Execute a single agent and merge its output into the state."""
+def _state_to_dict(state: ResearchState) -> Dict[str, Any]:
+    """Convert ResearchState Pydantic model to dict for LangGraph compatibility."""
+    # Use model_dump with mode="python" to get native Python types
+    # This ensures nested Pydantic models are converted to dicts
+    return state.model_dump(mode="python", exclude_none=False)
 
-    logger.info("Running %s agent", name)
-    state.current_agent = name
 
-    try:
-        updates = handler(state) or {}
-        if isinstance(updates, dict):
-            state.update(updates)
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.exception("%s agent failed", name)
-        state.errors.append(f"{name} agent error: {exc}")
-        state.workflow_status = "failed"
-        raise
+def _dict_to_state(state_dict: Dict[str, Any]) -> ResearchState:
+    """Convert dict back to ResearchState Pydantic model."""
+    # Pydantic will automatically reconstruct nested models from dicts
+    # because of the type hints in ResearchState
+    return ResearchState.model_validate(state_dict)
+
+
+def _create_graph_nodes(agents: Dict[str, object]) -> Dict[str, callable]:
+    """Create LangGraph node functions that wrap agent methods."""
+    
+    def discovery_node(state_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """Discovery agent node."""
+        logger.info("Running discovery agent")
+        state = _dict_to_state(state_dict)
+        state.current_agent = "discovery"
+        
+        try:
+            updates = agents["discovery"].discover(state) or {}
+            if isinstance(updates, dict):
+                state.update(updates)
+            return _state_to_dict(state)
+        except Exception as exc:
+            logger.exception("Discovery agent failed")
+            state.errors.append(f"discovery agent error: {exc}")
+            state.workflow_status = "failed"
+            raise
+    
+    def validation_node(state_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """Validation agent node."""
+        logger.info("Running validation agent")
+        state = _dict_to_state(state_dict)
+        state.current_agent = "validation"
+        
+        try:
+            updates = agents["validation"].validate(state) or {}
+            if isinstance(updates, dict):
+                state.update(updates)
+            return _state_to_dict(state)
+        except Exception as exc:
+            logger.exception("Validation agent failed")
+            state.errors.append(f"validation agent error: {exc}")
+            state.workflow_status = "failed"
+            raise
+    
+    def synthesis_node(state_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """Synthesis agent node."""
+        logger.info("Running synthesis agent")
+        state = _dict_to_state(state_dict)
+        state.current_agent = "synthesis"
+        
+        try:
+            updates = agents["synthesis"].synthesize(state) or {}
+            if isinstance(updates, dict):
+                state.update(updates)
+            return _state_to_dict(state)
+        except Exception as exc:
+            logger.exception("Synthesis agent failed")
+            state.errors.append(f"synthesis agent error: {exc}")
+            state.workflow_status = "failed"
+            raise
+    
+    def reporter_node(state_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """Reporter agent node."""
+        logger.info("Running reporter agent")
+        state = _dict_to_state(state_dict)
+        state.current_agent = "reporter"
+        
+        try:
+            updates = agents["reporter"].report(state) or {}
+            if isinstance(updates, dict):
+                state.update(updates)
+            state.workflow_status = "completed"
+            state.completed_at = datetime.now().isoformat()
+            state.current_agent = "complete"
+            logger.info("Pipeline completed successfully")
+            return _state_to_dict(state)
+        except Exception as exc:
+            logger.exception("Reporter agent failed")
+            state.errors.append(f"reporter agent error: {exc}")
+            state.workflow_status = "failed"
+            raise
+    
+    return {
+        "discovery": discovery_node,
+        "validation": validation_node,
+        "synthesis": synthesis_node,
+        "reporter": reporter_node,
+    }
+
+
+def _build_research_graph(agents: Dict[str, object]) -> Any:
+    """Build and compile the LangGraph state machine for research pipeline.
+    
+    Returns:
+        Compiled LangGraph that can be invoked with state dict.
+    """
+    
+    # Define state schema as TypedDict for LangGraph
+    class ResearchStateDict(TypedDict):
+        """State schema for LangGraph - mirrors ResearchState fields."""
+        query: str
+        research_depth: str
+        user_id: str | None
+        raw_sources: List[Dict[str, Any]]
+        discovery_metadata: Dict[str, Any]
+        validated_sources: List[Dict[str, Any]]
+        validation_scores: List[Dict[str, Any]]
+        credibility_report: Dict[str, Any] | None
+        knowledge_graph: Dict[str, Any] | None
+        research_gaps: List[Dict[str, Any]]
+        consensus_findings: List[str]
+        contradictions: List[Dict[str, Any]]
+        key_concepts: List[str]
+        executive_summary: str
+        detailed_report: str
+        citation_map: Dict[str, Any] | None
+        visualizations: List[Dict[str, Any]]
+        source_quality_avg: float
+        citation_counts: Dict[str, Any]
+        conflicts_detected: List[Dict[str, Any]]
+        current_agent: str
+        workflow_status: str
+        errors: List[str]
+        synthesis_ready: bool
+        started_at: str
+        completed_at: str
+    
+    # Create graph
+    graph = StateGraph(ResearchStateDict)
+    
+    # Create node functions
+    nodes = _create_graph_nodes(agents)
+    
+    # Add nodes to graph
+    graph.add_node("discovery", nodes["discovery"])
+    graph.add_node("validation", nodes["validation"])
+    graph.add_node("synthesis", nodes["synthesis"])
+    graph.add_node("reporter", nodes["reporter"])
+    
+    # Define sequential edges
+    graph.set_entry_point("discovery")
+    graph.add_edge("discovery", "validation")
+    graph.add_edge("validation", "synthesis")
+    graph.add_edge("synthesis", "reporter")
+    graph.add_edge("reporter", END)
+    
+    # Compile graph and return compiled version
+    return graph.compile()
 
 
 def _execute_pipeline(state: ResearchState, agents: Dict[str, object]) -> ResearchState:
-    """Run the sequential pipeline across all agents."""
+    """Run the sequential pipeline across all agents using LangGraph."""
 
-    steps: List[Tuple[str, callable]] = [
-        ("discovery", agents["discovery"].discover),
-        ("validation", agents["validation"].validate),
-        ("rag", agents["rag"].integrate),
-        ("synthesis", agents["synthesis"].synthesize),
-        ("ml", agents["ml"].analyze),
-        ("reporter", agents["reporter"].report),
-        ("monitoring", agents["monitoring"].monitor),
-    ]
-
-    for name, handler in steps:
-        _run_agent(state, name, handler)
-
-    state.workflow_status = "completed"
-    state.completed_at = datetime.now().isoformat()
-    state.current_agent = "complete"
-    logger.info("Pipeline completed successfully")
-    return state
+    # Build and compile the graph
+    compiled_graph = _build_research_graph(agents)
+    
+    # Convert state to dict for LangGraph
+    state_dict = _state_to_dict(state)
+    
+    # Execute the graph
+    try:
+        final_state_dict = compiled_graph.invoke(state_dict)
+        # Convert back to ResearchState
+        return _dict_to_state(final_state_dict)
+    except Exception as exc:
+        logger.exception("Pipeline execution failed")
+        state.workflow_status = "failed"
+        state.errors.append(f"Pipeline execution error: {exc}")
+        return state
 
 
 def _save_detailed_report(state: ResearchState, query: str) -> Path:
@@ -162,7 +296,6 @@ def _summarise_state(state: ResearchState) -> str:
         f"Consensus findings: {len(state.consensus_findings)}",
         f"Research gaps: {len(state.research_gaps)}",
         f"Contradictions: {len(state.contradictions)}",
-        f"Monitoring triggers: {len(state.alert_triggers)}",
         f"Errors: {len(state.errors)}",
         "=" * 80,
     ]
@@ -176,7 +309,16 @@ def run_research_pipeline(query: str, research_depth: str = "standard") -> Resea
 
     llm = config.get_llm()
     state = initialize_state(query, research_depth)
-    agents = _build_agents(llm)
+    
+    # Create depth configuration
+    depth_config = ResearchDepthConfig.get_depth_config(research_depth)
+    logger.info("Depth config: arxiv=%d, web=%d, scholar=%d, validation_min=%d",
+                depth_config.max_arxiv_results,
+                depth_config.max_web_results,
+                depth_config.max_semantic_scholar_results,
+                depth_config.validation_min_score)
+    
+    agents = _build_agents(llm, depth_config)
 
     try:
         state = _execute_pipeline(state, agents)

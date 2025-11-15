@@ -104,29 +104,6 @@ class CitationMap(DictLikeModel):
     citation_network: List[Dict[str, Any]] = Field(default_factory=list)
 
 
-class AlertTrigger(DictLikeModel):
-    type: str
-    keyword: Optional[str] = None
-    threshold: Optional[int] = None
-    timeframe_days: Optional[int] = None
-    priority: str = "medium"
-    action: str = "notify"
-
-
-class TrendAnalysis(DictLikeModel):
-    emerging_topics: List[Dict[str, Any]] = Field(default_factory=list)
-    publication_velocity: Dict[str, Any] = Field(default_factory=dict)
-    citation_trends: Dict[str, Any] = Field(default_factory=dict)
-    author_networks: List[Dict[str, Any]] = Field(default_factory=list)
-
-
-class PaperCluster(DictLikeModel):
-    n_clusters: int = 0
-    clusters: Dict[str, Any] = Field(default_factory=dict)
-    cluster_themes: Dict[str, Any] = Field(default_factory=dict)
-    cluster_sizes: Dict[str, int] = Field(default_factory=dict)
-
-
 class ResearchState(DictLikeModel):
     """Complete application state tracked across agents."""
 
@@ -151,27 +128,11 @@ class ResearchState(DictLikeModel):
     contradictions: List[Contradiction] = Field(default_factory=list)
     key_concepts: List[str] = Field(default_factory=list)
 
-    # RAG Phase
-    vector_store_id: str = ""
-    embeddings_created: bool = False
-    rag_ready: bool = False
-
     # Reporter Phase
     executive_summary: str = ""
     detailed_report: str = ""
     citation_map: Optional[CitationMap] = None
     visualizations: List[Dict[str, Any]] = Field(default_factory=list)
-
-    # Monitoring Phase
-    monitoring_enabled: bool = False
-    alert_triggers: List[AlertTrigger] = Field(default_factory=list)
-    trend_analysis: Optional[TrendAnalysis] = None
-
-    # ML Analysis Phase
-    ml_topics: List[Dict[str, Any]] = Field(default_factory=list)
-    paper_clusters: Optional[PaperCluster] = None
-    ml_quality_scores: List[Dict[str, Any]] = Field(default_factory=list)
-    ml_insights: Dict[str, Any] = Field(default_factory=dict)
 
     # Quality Metrics
     source_quality_avg: float = 0.0

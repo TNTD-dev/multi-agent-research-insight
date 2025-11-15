@@ -5,7 +5,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Dict, List
-from urllib.parse import urlparse
 
 from src.agents.state import (
     CredibilityReport,
@@ -13,70 +12,24 @@ from src.agents.state import (
     ResearchState,
     ValidationScore,
 )
+from src.config import ResearchDepthConfig
 from src.utils.logger import default_logger as logger
 
 
 class ValidationAgent:
     """Agent responsible for validating discovered sources."""
 
-    def __init__(self, llm):
+    def __init__(self, llm, depth_config: ResearchDepthConfig | None = None):
         self.llm = llm
-
-    def _check_domain_reputation(self, url: str) -> tuple[int, str]:
-        """Check domain reputation and return bonus score and reason."""
-        if not url:
-            return 0, ""
-        
-        try:
-            parsed = urlparse(url)
-            domain = parsed.netloc.lower()
-            
-            # Check TLD
-            if domain.endswith('.edu'):
-                return 5, "Educational domain (+5)"
-            elif domain.endswith('.gov'):
-                return 5, "Government domain (+5)"
-            elif domain.endswith('.org'):
-                return 3, "Organization domain (+3)"
-            
-            # Check for known academic domains
-            academic_keywords = ['university', 'college', 'academy', 'institute', 'research', 'scholar']
-            if any(keyword in domain for keyword in academic_keywords):
-                return 3, "Academic domain (+3)"
-            
-            return 0, ""
-        except Exception:  # pragma: no cover
-            return 0, ""
-
-    def _check_content_quality(self, summary: str) -> tuple[int, str]:
-        """Check summary content quality."""
-        if not summary:
-            return -5, "Missing summary (-5)"  # Reduced from -10 to -5
-        
-        summary_lower = summary.lower()
-        
-        # Check for spam indicators
-        spam_indicators = ['click here', 'buy now', 'limited time', 'act now']
-        if any(indicator in summary_lower for indicator in spam_indicators):
-            return -15, "Spam indicators detected (-15)"
-        
-        # Check for meaningful content (more lenient)
-        meaningful_words = len([w for w in summary.split() if len(w) > 3])
-        if meaningful_words < 5:  # Reduced from 10 to 5
-            return -3, "Low content quality (-3)"  # Reduced from -5 to -3
-        
-        return 0, ""
+        self.depth_config = depth_config
 
     def calculate_source_score(self, source: ResearchSource) -> Dict[str, object]:
-        """Compute an improved heuristic credibility score for a source."""
+        """Compute a heuristic credibility score for a source."""
 
         score = 0
         factors: List[str] = []
 
-        # 1. Source Type Scoring (improved)
         source_type = source.get("source_type", "")
-        url = source.get("url", "")
-        
         if source_type == "semantic_scholar":
             score += 28
             factors.append("Peer-reviewed (+28)")
@@ -84,117 +37,51 @@ class ValidationAgent:
             score += 25
             factors.append("arXiv preprint (+25)")
         else:
-            # Web source with domain reputation check
-            base_score = 18  # Increased from 12 to be more balanced
-            domain_bonus, domain_reason = self._check_domain_reputation(url)
-            score += base_score + domain_bonus
-            factors.append(f"Web source (+{base_score})")
-            if domain_reason:
-                factors.append(domain_reason)
+            score += 15
+            factors.append("Web source (+15)")
 
-        # 2. Citation Scoring (improved with more granular levels)
         citations = source.get("citation_count", 0) or 0
-        if citations >= 500:
-            citation_score = 30
-        elif citations >= 200:
+        if citations > 100:
             citation_score = 25
-        elif citations >= 100:
+        elif citations > 50:
             citation_score = 20
-        elif citations >= 50:
+        elif citations > 10:
             citation_score = 15
-        elif citations >= 20:
-            citation_score = 12
-        elif citations >= 10:
-            citation_score = 10
-        elif citations >= 5:
-            citation_score = 7
-        elif citations >= 1:
-            citation_score = 5
         else:
-            # Give small bonus even for 0 citations (web sources often don't have citation counts)
-            citation_score = 2 if source_type == "web" else 0
+            citation_score = 5
         score += citation_score
         factors.append(f"Citations: {citations} (+{citation_score})")
 
-        # 3. Recency Scoring (improved - less penalty for older sources)
         published = source.get("published", "")
-        has_published_date = False
         try:
             if published:
                 year = int(str(published).split("-")[0])
                 age = datetime.now().year - year
-                has_published_date = True
                 if age <= 1:
                     recency_score = 20
-                elif age <= 2:
-                    recency_score = 18
                 elif age <= 3:
                     recency_score = 15
                 elif age <= 5:
-                    recency_score = 12
-                elif age <= 10:
-                    recency_score = 8
+                    recency_score = 10
                 else:
-                    recency_score = 5  # Less penalty for older sources
+                    recency_score = 5
                 score += recency_score
                 factors.append(f"Age: {age}y (+{recency_score})")
         except Exception:  # pragma: no cover - defensive
-            pass
-        
-        # Penalty for missing published date (reduced penalty)
-        if not has_published_date:
-            score -= 2  # Reduced from -5 to -2
-            factors.append("Missing published date (-2)")
+            score += 10
 
-        # 4. Author Information (new, with reduced penalty)
-        authors = source.get("authors", [])
-        if len(authors) >= 3:
-            score += 5
-            factors.append(f"Multiple authors ({len(authors)}) (+5)")
-        elif len(authors) >= 1:
-            score += 3
-            factors.append(f"Has authors ({len(authors)}) (+3)")
-        else:
-            # Reduced penalty, especially for web sources where authors may not be available
-            penalty = -2 if source_type == "web" else -3
-            score += penalty
-            factors.append(f"No authors ({penalty})")
-
-        # 5. Summary Quality (improved - checks content quality, not just length)
-        summary = source.get("summary", "")
-        content_penalty, content_reason = self._check_content_quality(summary)
-        score += content_penalty
-        if content_reason:
-            factors.append(content_reason)
-        
-        summary_length = len(summary)
-        if summary_length > 300:
-            score += 15
-            factors.append("Comprehensive summary (+15)")
-        elif summary_length > 200:
-            score += 12
-            factors.append("Substantial summary (+12)")
+        summary_length = len(source.get("summary", ""))
+        if summary_length > 200:
+            score += 20
+            factors.append("Substantial summary (+20)")
         elif summary_length > 100:
-            score += 8
-            factors.append("Moderate summary (+8)")
-        elif summary_length > 50:
+            score += 15
+            factors.append("Moderate summary (+15)")
+        else:
             score += 5
             factors.append("Brief summary (+5)")
-        elif summary_length > 20:
-            score += 2  # Small bonus for very brief summaries
-            factors.append("Very brief summary (+2)")
-        # Note: Missing summary penalty is already handled in _check_content_quality
 
-        # 6. URL Validity Check (new, with reduced penalty)
-        if not url or url.strip() == "":
-            score -= 8  # Reduced from -15 to -8
-            factors.append("Missing URL (-8)")
-        elif not url.startswith(("http://", "https://")):
-            score -= 3  # Reduced from -5 to -3
-            factors.append("Invalid URL format (-3)")
-
-        # Ensure score is within bounds
-        final_score = max(0, min(score, 100))
+        final_score = min(score, 100)
         return {
             "score": final_score,
             "factors": factors,
@@ -214,39 +101,18 @@ class ValidationAgent:
         return "F - Very Poor"
 
     def check_relevance(self, source: ResearchSource, query: str) -> Dict[str, object]:
-        """Use the LLM to determine relevance of a source with improved prompt."""
+        """Use the LLM to determine relevance of a source."""
 
-        title = source.get('title', 'Unknown')
-        summary = source.get('summary', '')[:500]  # Increased from 300
-        authors = source.get('authors', [])
-        source_type = source.get('source_type', 'unknown')
-        
-        authors_str = ', '.join(authors[:3]) if authors else "Unknown"
-        if len(authors) > 3:
-            authors_str += f" and {len(authors) - 3} more"
+        prompt = f"""Assess relevance to query.
 
-        prompt = f"""You are an expert research evaluator. Assess the relevance of this source to the research query.
+Query: {query}
+Title: {source.get('title', 'Unknown')}
+Summary: {source.get('summary', '')[:300]}
 
-RESEARCH QUERY: {query}
-
-SOURCE INFORMATION:
-- Title: {title}
-- Authors: {authors_str}
-- Source Type: {source_type}
-- Summary: {summary}
-
-EVALUATION CRITERIA:
-1. Does the source directly address the query topic?
-2. Does it provide relevant information, data, or insights?
-3. Is it from a credible source type for this query?
-4. Does the summary indicate meaningful content related to the query?
-
-Be strict: Only mark as RELEVANT if the source clearly relates to the query topic.
-
-Format your response EXACTLY as:
+Format strictly as:
 RELEVANT: [YES/NO]
 CONFIDENCE: [HIGH/MEDIUM/LOW]
-REASON: [One clear sentence explaining your decision]"""
+REASON: [One sentence]"""
 
         try:
             response = self.llm.invoke(prompt)
@@ -284,39 +150,17 @@ REASON: [One clear sentence explaining your decision]"""
         score_records: List[ValidationScore] = []
 
         logger.info("Validating %d sources", len(raw_sources))
-        
-        # Calculate dynamic threshold based on average scores
-        preliminary_scores = []
-        for source in raw_sources:
-            score_result = self.calculate_source_score(source)
-            preliminary_scores.append(score_result["score"])
-        
-        avg_preliminary = sum(preliminary_scores) / len(preliminary_scores) if preliminary_scores else 45
-        # Dynamic threshold: at least 40 (reduced from 50), or 15 points below average (whichever is higher)
-        # More lenient to allow more sources through while still maintaining quality
-        dynamic_threshold = max(40, int(avg_preliminary - 15))
-        logger.info("Using validation threshold: %d (avg preliminary score: %.1f)", dynamic_threshold, avg_preliminary)
-        
         for idx, source in enumerate(raw_sources, start=1):
             score_result = self.calculate_source_score(source)
             relevance = self.check_relevance(source, query)
 
-            # Improved acceptance criteria: higher threshold and relevance confidence check
-            is_relevant = relevance["is_relevant"]
-            confidence = relevance.get("confidence", "MEDIUM")
-            score = score_result["score"]
-            
-            # Accept if: relevant AND (high confidence OR score >= threshold)
-            # OR: medium confidence AND score >= threshold + 5
-            should_accept = (
-                is_relevant and (
-                    confidence == "HIGH" or
-                    score >= dynamic_threshold or
-                    (confidence == "MEDIUM" and score >= dynamic_threshold + 5)
-                )
+            min_score = (
+                self.depth_config.validation_min_score
+                if self.depth_config
+                else 40
             )
 
-            if should_accept:
+            if relevance["is_relevant"] and score_result["score"] >= min_score:
                 validated.append(source)
                 score_records.append(
                     ValidationScore(
@@ -328,22 +172,9 @@ REASON: [One clear sentence explaining your decision]"""
                         relevance=relevance,
                     )
                 )
-                logger.info(
-                    "✓ Source %d accepted (%s, score: %.1f, confidence: %s)",
-                    idx, score_result["grade"], score, confidence
-                )
+                logger.info("✓ Source %d accepted (%s)", idx, score_result["grade"])
             else:
-                rejection_reason = []
-                if not is_relevant:
-                    rejection_reason.append("not relevant")
-                if score < dynamic_threshold:
-                    rejection_reason.append(f"score too low ({score:.1f} < {dynamic_threshold})")
-                if confidence == "LOW":
-                    rejection_reason.append("low confidence")
-                logger.info(
-                    "✗ Source %d rejected (%s)",
-                    idx, ", ".join(rejection_reason) if rejection_reason else "unknown reason"
-                )
+                logger.info("✗ Source %d rejected", idx)
 
         avg_score = (
             sum(record.credibility_score for record in score_records) / len(score_records)

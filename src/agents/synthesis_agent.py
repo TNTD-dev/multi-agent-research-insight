@@ -15,23 +15,33 @@ from src.agents.state import (
     ResearchSource,
     ResearchState,
 )
+from src.config import ResearchDepthConfig
 from src.utils.logger import default_logger as logger
 
 
 class SynthesisAgent:
     """Agent responsible for synthesising research findings."""
 
-    def __init__(self, llm):
+    def __init__(self, llm, depth_config: ResearchDepthConfig | None = None):
         self.llm = llm
+        self.depth_config = depth_config
 
-    def extract_key_concepts(self, sources: List[ResearchSource]) -> List[str]:
+    def extract_key_concepts(self, sources: List[ResearchSource], query: str = "") -> List[str]:
         """Identify key concepts across validated sources."""
 
-        combined_text = "\n".join(
-            f"{source.get('title', '')} {source.get('summary', '')[:200]}" for source in sources[:10]
+        max_concepts = (
+            self.depth_config.max_concepts
+            if self.depth_config
+            else 15
         )
+        max_sources = min(10, len(sources))
+        combined_text = "\n".join(
+            f"{source.get('title', '')} {source.get('summary', '')[:200]}" for source in sources[:max_sources]
+        )
+        query_context = f" related to '{query}'" if query else ""
         prompt = (
-            "Extract 10-15 key technical concepts from the following research snippets.\n"
+            f"Extract {max_concepts} key technical concepts{query_context} from the following research snippets.\n"
+            f"{'IMPORTANT: Only extract concepts that are directly relevant to the research topic. ' if query else ''}"
             f"{combined_text}\n"
             "Return ONLY a comma-separated list of concepts, without any introductory text or explanation."
         )
@@ -79,8 +89,13 @@ class SynthesisAgent:
                     if concept:
                         concepts.append(concept)
             
+            max_concepts = (
+                self.depth_config.max_concepts
+                if self.depth_config
+                else 15
+            )
             logger.info("Synthesis: extracted %d concepts", len(concepts))
-            return concepts[:15]
+            return concepts[:max_concepts]
         except Exception as exc:  # pylint: disable=broad-except
             logger.warning("Concept extraction failed: %s", exc)
             return []
@@ -88,13 +103,23 @@ class SynthesisAgent:
     def find_consensus(self, sources: List[ResearchSource], query: str) -> List[str]:
         """Determine consensus findings across sources."""
 
+        max_findings = (
+            self.depth_config.max_consensus_findings
+            if self.depth_config
+            else 7
+        )
+        max_sources = min(8, len(sources))
         summaries = "\n\n".join(
             f"Source {i + 1}: {source.get('title', '')}\n{source.get('summary', '')[:300]}"
-            for i, source in enumerate(sources[:8])
+            for i, source in enumerate(sources[:max_sources])
         )
         prompt = (
-            f"Identify consensus findings about {query} from the following summaries:\n{summaries}\n"
-            "List 5-7 findings prefixed with '-'."
+            f"Identify consensus findings SPECIFICALLY about '{query}' from the following summaries.\n"
+            f"IMPORTANT: Only include findings that are DIRECTLY related to '{query}'. "
+            f"Exclude any information about unrelated topics (e.g., if query is about mental health, "
+            f"do NOT include findings about financial data, unless they are specifically about mental health AND finance).\n\n"
+            f"Summaries:\n{summaries}\n\n"
+            f"List {max_findings} findings prefixed with '-'. Each finding must be directly relevant to '{query}'."
         )
 
         try:
@@ -147,8 +172,13 @@ class SynthesisAgent:
     def identify_research_gaps(self, concepts: List[str]) -> List[ResearchGap]:
         """Generate research gap hypotheses using the LLM."""
 
+        max_gaps = (
+            self.depth_config.max_research_gaps
+            if self.depth_config
+            else 5
+        )
         prompt = (
-            "Given the following key concepts, identify 3-5 research gaps.\n"
+            f"Given the following key concepts, identify {max_gaps} research gaps.\n"
             f"Concepts: {', '.join(concepts[:10])}\n"
             "Format each gap as:\nGAP: <name>\nWHY: <importance>\n---"
         )
@@ -186,8 +216,13 @@ class SynthesisAgent:
         nodes: List[KnowledgeGraphNode] = []
         edges: List[KnowledgeGraphEdge] = []
 
+        max_concepts = (
+            self.depth_config.max_concepts
+            if self.depth_config
+            else 15
+        )
         concept_ids = {}
-        for concept in concepts[:15]:
+        for concept in concepts[:max_concepts]:
             if len(concept.strip()) <= 2:
                 continue
             concept_id = concept.lower().replace(" ", "_").replace("-", "_")
@@ -281,7 +316,7 @@ class SynthesisAgent:
                 "conflicts_detected": [],
             }
 
-        concepts = self.extract_key_concepts(sources)
+        concepts = self.extract_key_concepts(sources, state.query)
         consensus = self.find_consensus(sources, state.query)
         contradictions = self.detect_contradictions(sources)
         gaps = self.identify_research_gaps(concepts)

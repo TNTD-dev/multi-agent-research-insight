@@ -16,16 +16,17 @@ except ImportError:  # pragma: no cover - optional dependency
     TavilyClient = None
 
 from src.agents.state import ResearchSource, ResearchState
-from src.config import ResearchConfig
+from src.config import ResearchConfig, ResearchDepthConfig
 from src.utils.logger import default_logger as logger
 
 
 class DiscoveryAgent:
     """Autonomous agent orchestrating multi-source discovery."""
 
-    def __init__(self, llm, config: ResearchConfig):
+    def __init__(self, llm, config: ResearchConfig, depth_config: ResearchDepthConfig | None = None):
         self.llm = llm
         self.config = config
+        self.depth_config = depth_config
         self.sources_searched: List[str] = []
 
     def _log_phase(self, message: str) -> None:
@@ -34,7 +35,12 @@ class DiscoveryAgent:
     def search_arxiv(self, query: str, max_results: int | None = None) -> List[ResearchSource]:
         """Search arXiv for relevant publications."""
 
-        max_results = max_results or self.config.search.max_arxiv_results
+        if max_results is None:
+            max_results = (
+                self.depth_config.max_arxiv_results
+                if self.depth_config
+                else self.config.search.max_arxiv_results
+            )
 
         try:
             search = arxiv.Search(
@@ -77,7 +83,12 @@ class DiscoveryAgent:
     def search_web(self, query: str, num_results: int | None = None) -> List[ResearchSource]:
         """Search general web sources using Tavily API."""
 
-        num_results = num_results or self.config.search.max_web_results
+        if num_results is None:
+            num_results = (
+                self.depth_config.max_web_results
+                if self.depth_config
+                else self.config.search.max_web_results
+            )
 
         try:
             if TavilyClient is None:
@@ -130,7 +141,12 @@ class DiscoveryAgent:
     def search_semantic_scholar(self, query: str, limit: int | None = None) -> List[ResearchSource]:
         """Search publications from Semantic Scholar."""
 
-        limit = limit or self.config.search.max_semantic_scholar_results
+        if limit is None:
+            limit = (
+                self.depth_config.max_semantic_scholar_results
+                if self.depth_config
+                else self.config.search.max_semantic_scholar_results
+            )
 
         try:
             response = requests.get(
@@ -222,7 +238,21 @@ class DiscoveryAgent:
         sources.extend(self.search_web(query))
         sources.extend(self.search_semantic_scholar(query))
 
-        if depth in {"standard", "deep"} and len(sources) < 15:
+        # Check if reformulated searches should be run based on depth_config
+        should_run_reformulated = False
+        if self.depth_config:
+            if self.depth_config.enable_reformulated_searches:
+                condition = self.depth_config.reformulated_search_condition
+                if condition == "always":
+                    should_run_reformulated = True
+                elif condition == "if_less_than_15" and len(sources) < 15:
+                    should_run_reformulated = True
+        else:
+            # Fallback to old behavior for backward compatibility
+            if depth in {"standard", "deep"} and len(sources) < 15:
+                should_run_reformulated = True
+
+        if should_run_reformulated:
             self._log_phase("Running reformulated searches")
             for alt_query in self.reformulate_query(query):
                 self._log_phase(f"Alternative query: {alt_query}")

@@ -41,25 +41,6 @@ class SearchConfig(BaseModel):
     semantic_scholar_timeout: int = Field(default=10, ge=1, le=60)
 
 
-class RAGConfig(BaseModel):
-    """Retrieval Augmented Generation configuration."""
-
-    embedding_model: str = Field(default="sentence-transformers/all-MiniLM-L6-v2")
-    chunk_size: int = Field(default=1000, ge=200, le=2000)
-    chunk_overlap: int = Field(default=200, ge=0, le=500)
-    chroma_persist_directory: str = Field(default="./chroma_db")
-    similarity_top_k: int = Field(default=5, ge=1, le=20)
-
-
-class MLConfig(BaseModel):
-    """Machine learning analysis configuration."""
-
-    enable_ml: bool = Field(default=True)
-    n_topics: int = Field(default=5, ge=2, le=20)
-    n_clusters: int = Field(default=3, ge=2, le=10)
-    random_state: int = Field(default=42)
-
-
 class LoggingConfig(BaseModel):
     """Logging preferences for the pipeline."""
 
@@ -77,13 +58,84 @@ class LoggingConfig(BaseModel):
         return upper
 
 
+class ResearchDepthConfig(BaseModel):
+    """Configuration for research depth levels (quick, standard, deep)."""
+
+    # Discovery settings
+    max_arxiv_results: int = Field(ge=1, le=50)
+    max_web_results: int = Field(ge=1, le=50)
+    max_semantic_scholar_results: int = Field(ge=1, le=20)
+    enable_reformulated_searches: bool = Field(default=False)
+    reformulated_search_condition: Optional[str] = Field(
+        default=None, description="Condition for reformulated searches: 'always', 'if_less_than_15', or None"
+    )
+
+    # Validation settings
+    validation_min_score: int = Field(ge=0, le=100)
+
+    # Synthesis settings
+    max_concepts: int = Field(ge=1, le=30)
+    max_consensus_findings: int = Field(ge=1, le=20)
+    max_research_gaps: int = Field(ge=1, le=15)
+
+    # Reporter settings
+    report_detail_level: str = Field(default="standard", description="brief, standard, or detailed")
+    max_sources_in_report: int = Field(ge=1, le=50)
+
+    @classmethod
+    def get_depth_config(cls, depth: str) -> "ResearchDepthConfig":
+        """Get configuration for a specific research depth level."""
+        depth_lower = depth.lower()
+        
+        if depth_lower == "quick":
+            return cls(
+                max_arxiv_results=3,
+                max_web_results=3,
+                max_semantic_scholar_results=2,
+                enable_reformulated_searches=False,
+                reformulated_search_condition=None,
+                validation_min_score=40,
+                max_concepts=8,
+                max_consensus_findings=3,
+                max_research_gaps=2,
+                report_detail_level="brief",
+                max_sources_in_report=5,
+            )
+        elif depth_lower == "deep":
+            return cls(
+                max_arxiv_results=15,
+                max_web_results=12,
+                max_semantic_scholar_results=10,
+                enable_reformulated_searches=True,
+                reformulated_search_condition="always",
+                validation_min_score=50,
+                max_concepts=20,
+                max_consensus_findings=10,
+                max_research_gaps=8,
+                report_detail_level="detailed",
+                max_sources_in_report=20,
+            )
+        else:  # standard (default)
+            return cls(
+                max_arxiv_results=8,
+                max_web_results=8,
+                max_semantic_scholar_results=5,
+                enable_reformulated_searches=True,
+                reformulated_search_condition="if_less_than_15",
+                validation_min_score=40,
+                max_concepts=15,
+                max_consensus_findings=7,
+                max_research_gaps=5,
+                report_detail_level="standard",
+                max_sources_in_report=10,
+            )
+
+
 class ResearchConfig(BaseModel):
     """Top-level configuration aggregating all sub-configs."""
 
     llm: LLMConfig
     search: SearchConfig = Field(default_factory=SearchConfig)
-    rag: RAGConfig = Field(default_factory=RAGConfig)
-    ml: MLConfig = Field(default_factory=MLConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
 
     output_dir: Path = Field(default=Path("./outputs"))
@@ -109,21 +161,6 @@ class ResearchConfig(BaseModel):
             semantic_scholar_timeout=int(os.getenv("SEMANTIC_SCHOLAR_TIMEOUT", 10)),
         )
 
-        rag_config = RAGConfig(
-            embedding_model=os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"),
-            chunk_size=int(os.getenv("CHUNK_SIZE", 1000)),
-            chunk_overlap=int(os.getenv("CHUNK_OVERLAP", 200)),
-            chroma_persist_directory=os.getenv("CHROMA_PERSIST_DIR", "./chroma_db"),
-            similarity_top_k=int(os.getenv("SIMILARITY_TOP_K", 5)),
-        )
-
-        ml_config = MLConfig(
-            enable_ml=os.getenv("ENABLE_ML", "true").lower() == "true",
-            n_topics=int(os.getenv("N_TOPICS", 5)),
-            n_clusters=int(os.getenv("N_CLUSTERS", 3)),
-            random_state=int(os.getenv("RANDOM_STATE", 42)),
-        )
-
         logging_config = LoggingConfig(
             log_level=os.getenv("LOG_LEVEL", "INFO"),
             log_file=os.getenv("LOG_FILE", "logs/research_pipeline.log"),
@@ -133,8 +170,6 @@ class ResearchConfig(BaseModel):
         config = cls(
             llm=llm_config,
             search=search_config,
-            rag=rag_config,
-            ml=ml_config,
             logging=logging_config,
         )
         config._prepare_directories()
@@ -161,7 +196,7 @@ class ResearchConfig(BaseModel):
 
         return (
             f"Model: {self.llm.model_name} | Temperature: {self.llm.temperature} | "
-            f"Tokens: {self.llm.max_tokens} | ML Enabled: {self.ml.enable_ml}"
+            f"Tokens: {self.llm.max_tokens}"
         )
 
 
