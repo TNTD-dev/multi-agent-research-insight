@@ -330,20 +330,23 @@ with tab2:
                 # Stop collecting insights when we hit next major section
                 # Match any numbered section header after Notable Insights
                 if insights_started:
-                    # Check for Research Gaps (any number)
+                    # Check for Research Gaps (numbered or unnumbered headings)
                     gaps_pattern = re.compile(r'\*\*\s*\d+\.\s*(research\s+gaps|research\s+gaps\s+&)', re.IGNORECASE)
+                    unnumbered_gaps_pattern = re.compile(r'\*\*\s*research\s+gaps.*\*\*', re.IGNORECASE)
                     # Check for Conflicting Evidence (any number)
                     conflict_pattern = re.compile(r'\*\*\s*\d+\.\s*conflicting\s+evidence\s*\*\*', re.IGNORECASE)
                     # Check for Conclusion (any number)
                     conclusion_check_pattern = re.compile(r'\*\*\s*\d+\.\s*conclusion\s*\*\*', re.IGNORECASE)
                     
                     if gaps_pattern.search(line_lower) or \
+                       unnumbered_gaps_pattern.search(line_lower) or \
                        conflict_pattern.search(line_lower) or \
                        conclusion_check_pattern.search(line_lower) or \
                        ('## sources' in line_lower) or \
                        (line_stripped.startswith('## SOURCES')) or \
                        (line_stripped.startswith('## CONFLICTING')):
                         insights_started = False
+                        continue
                 
                 # Stop collecting conclusion when we hit Sources, Conflicting Evidence, or Recommendations
                 if conclusion_started:
@@ -381,10 +384,9 @@ with tab2:
                 # Remove markdown bold but keep content
                 line = line.replace('**', '').strip()
                 if line and not line.startswith('#') and len(line) > 10:
-                    # If line already has bullet, keep it; otherwise add one
-                    if not (line.startswith('-') or line.startswith('•')):
-                        line = f"- {line}"
-                    insights.append(line)
+                    # Remove leading bullet characters while preserving numbering
+                    line = re.sub(r'^[\-\•\*]+\s*', '', line)
+                    insights.append(line.strip())
             
             # Join conclusion lines and clean up
             conclusion = ' '.join(conclusion_section).strip()
@@ -535,12 +537,8 @@ with tab2:
         
         if insights:
             st.markdown("## 💡 Notable Insights")
-            for i, insight in enumerate(insights, 1):
-                # Check if insight already has bullet point formatting
-                if insight.startswith('-') or insight.startswith('•'):
-                    st.markdown(f"{insight}")
-                else:
-                    st.markdown(f"- {insight}")
+            insights_block = "\n\n".join(insights)
+            st.markdown(insights_block)
         else:
             st.markdown("## 💡 Notable Insights")
             st.info("No notable insights extracted from the report")
@@ -686,7 +684,7 @@ with tab3:
 st.markdown("---")
 st.markdown("""
 <div style="text-align: center; color: #666; padding: 1rem;">
-    <p>Multi-Agent Research Intelligence Platform | Powered by LangGraph, Groq LLM & ChromaDB</p>
+    <p>Multi-Agent Research Intelligence Platform | Powered by LangGraph, Groq LLM</p>
     <p>Built with ❤️ using Streamlit | © 2025</p>
 </div>
 """, unsafe_allow_html=True)
