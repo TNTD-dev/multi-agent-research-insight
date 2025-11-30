@@ -1,13 +1,14 @@
 # Multi-Agent Research Intelligence Platform
 
->An advanced multi-agent research system that automates the complete research workflow: **discovery → validation → synthesis → reporting** for academic and technical inquiries. The platform generates verifiable, structured reports with knowledge graphs.
+> An advanced multi-agent research system that automates the complete research workflow: **discovery → validation → synthesis → reporting** for academic and technical inquiries. The platform generates verifiable, structured reports with knowledge graphs.
 
 ---
 
 ## Overview
 
-The Multi-Agent Research Intelligence Platform is a sophisticated system designed to streamline the research process by automating key stages of information discovery and analysis. Built with modern AI technologies, it enables users to conduct comprehensive research efficiently, ensuring source quality and generating structured, verifiable reports with knowledge graphs.
----
+The Multi-Agent Research Intelligence Platform is a sophisticated system designed to streamline the research process by automating key stages of information discovery and analysis. Built with modern AI technologies, it enables users to conduct comprehensive research efficiently, ensuring source quality and generating structured, verifiable reports with knowledge graphs. 
+
+
 ## Demo
 - Click to watch demo
 
